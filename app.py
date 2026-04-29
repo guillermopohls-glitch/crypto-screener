@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
-from binance.client import Client
 import ta
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# 🔁 AUTO REFRESH (60s)
+# 🔁 AUTO REFRESH
 st_autorefresh(interval=60000, key="refresh")
 
 st.set_page_config(page_title="Crypto Screener PRO", layout="wide")
@@ -13,7 +12,7 @@ st.set_page_config(page_title="Crypto Screener PRO", layout="wide")
 st.title("📊 Crypto Entry Detector PRO")
 st.caption("Cloud estable + Probabilidad inteligente + Alertas")
 
-# 🔔 TELEGRAM (usa secrets en producción)
+# 🔔 TELEGRAM (usar secrets)
 TOKEN = st.secrets.get("TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
@@ -22,35 +21,38 @@ def send_telegram(msg):
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
         requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
     except:
-        pass  # evita que falle toda la app
+        pass
 
-# 🧠 evitar duplicados
+# Evitar alertas duplicadas
 if "alerts_sent" not in st.session_state:
     st.session_state.alerts_sent = set()
 
-# 🔗 BINANCE CLIENT (SIN PING PROBLEMÁTICO)
-try:
-    client = Client("", "")  # <- clave para cloud
-except:
-    st.error("Error conectando con Binance")
-    st.stop()
+# 📦 CACHE DATA
+@st.cache_data(ttl=60)
+def get_klines(symbol):
+    url = "https://api.binance.com/api/v3/klines"
+
+    params = {
+        "symbol": symbol,
+        "interval": "5m",
+        "limit": 150
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+
+        if isinstance(data, list):
+            return data
+        else:
+            return None
+    except:
+        return None
 
 symbols = [
     "BTCUSDT","ETHUSDT","SOLUSDT",
     "MANAUSDT","ADAUSDT","AVAXUSDT","ALGOUSDT"
 ]
-
-# 📦 CACHE (CLAVE PARA ESTABILIDAD)
-@st.cache_data(ttl=60)
-def get_klines(symbol):
-    try:
-        return client.get_klines(
-            symbol=symbol,
-            interval=Client.KLINE_INTERVAL_5MINUTE,
-            limit=150
-        )
-    except:
-        return None
 
 results = []
 
@@ -153,7 +155,6 @@ R:R: {rr}
             send_telegram(msg)
             st.session_state.alerts_sent.add(alert_key)
 
-    # 🎨 FORMATO PRO
     results.append({
         "Crypto": symbol.replace("USDT",""),
         "Precio": f"{price:,.4f}",
@@ -166,7 +167,6 @@ R:R: {rr}
         "R:R": rr if rr else "-"
     })
 
-# 📊 TABLA FINAL
 df_final = pd.DataFrame(results)
 df_final = df_final.sort_values(by="Probabilidad %", ascending=False)
 
