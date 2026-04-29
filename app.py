@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import ta
 import requests
+import time
 from streamlit_autorefresh import st_autorefresh
 
 # 🔁 AUTO REFRESH
@@ -10,9 +11,9 @@ st_autorefresh(interval=60000, key="refresh")
 st.set_page_config(page_title="Crypto Screener PRO", layout="wide")
 
 st.title("📊 Crypto Entry Detector PRO")
-st.caption("Cloud estable + Probabilidad inteligente + Alertas")
+st.caption("Producción real + Retry inteligente + Alertas")
 
-# 🔔 TELEGRAM (usar secrets)
+# 🔔 TELEGRAM (usa secrets)
 TOKEN = st.secrets.get("TOKEN", "")
 CHAT_ID = st.secrets.get("CHAT_ID", "")
 
@@ -23,11 +24,29 @@ def send_telegram(msg):
     except:
         pass
 
-# Evitar alertas duplicadas
+# 🧠 evitar duplicados
 if "alerts_sent" not in st.session_state:
     st.session_state.alerts_sent = set()
 
-# 📦 CACHE DATA
+# 🚀 RETRY INTELIGENTE
+def fetch_with_retry(url, params, retries=3, delay=1.5):
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, params=params, timeout=10)
+
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, list):
+                    return data
+
+            time.sleep(delay * (attempt + 1))  # backoff progresivo
+
+        except:
+            time.sleep(delay * (attempt + 1))
+
+    return None  # fallo total
+
+# 📦 CACHE + RETRY
 @st.cache_data(ttl=60)
 def get_klines(symbol):
     url = "https://api.binance.com/api/v3/klines"
@@ -38,16 +57,7 @@ def get_klines(symbol):
         "limit": 150
     }
 
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-
-        if isinstance(data, list):
-            return data
-        else:
-            return None
-    except:
-        return None
+    return fetch_with_retry(url, params)
 
 symbols = [
     "BTCUSDT","ETHUSDT","SOLUSDT",
@@ -160,14 +170,25 @@ R:R: {rr}
         "Precio": f"{price:,.4f}",
         "RSI": f"{rsi:.2f}",
         "Setup": setup,
-        "Probabilidad %": f"{probability}%",
+        "Probabilidad %": probability,  # ← IMPORTANTE: número real
         "Entrada": f"{entry:,.4f}" if entry else "-",
         "Stop": f"{stop:,.4f}" if stop else "-",
         "TP": f"{target:,.4f}" if target else "-",
         "R:R": rr if rr else "-"
     })
 
+# 🛡️ MANEJO SEGURO FINAL
+if len(results) == 0:
+    st.warning("⚠️ No se pudieron obtener datos (reintentos fallaron)")
+    st.stop()
+
 df_final = pd.DataFrame(results)
-df_final = df_final.sort_values(by="Probabilidad %", ascending=False)
+
+# Ordenar SOLO si existe columna
+if "Probabilidad %" in df_final.columns:
+    df_final = df_final.sort_values(by="Probabilidad %", ascending=False)
+
+# Mostrar bonito
+df_final["Probabilidad %"] = df_final["Probabilidad %"].astype(str) + "%"
 
 st.dataframe(df_final, use_container_width=True)
