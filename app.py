@@ -173,7 +173,7 @@ for symbol in symbols:
         rr = 1.8
         setup = f"LONG 📈 ({prob_long}%)"
 
-    if probability >= 85:
+    if probability >= 70:
         key = f"{symbol}_{setup}"
         if key not in st.session_state.alerts_sent:
             msg = f"{symbol} | {setup} | {price:.4f} | {probability}%"
