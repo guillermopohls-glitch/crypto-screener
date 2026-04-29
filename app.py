@@ -5,43 +5,61 @@ import ta
 import requests
 from streamlit_autorefresh import st_autorefresh
 
-# 🔁 AUTO REFRESH
+# 🔁 AUTO REFRESH (60s)
 st_autorefresh(interval=60000, key="refresh")
 
 st.set_page_config(page_title="Crypto Screener PRO", layout="wide")
 
 st.title("📊 Crypto Entry Detector PRO")
-st.caption("Formato profesional + Probabilidad inteligente")
+st.caption("Cloud estable + Probabilidad inteligente + Alertas")
 
-# 🔔 TELEGRAM
-TOKEN = "8728390279:AAH5EHU291mL-XOH3xOtuqsq-Wn3HFTGGxA"
-CHAT_ID = "1662043599"
+# 🔔 TELEGRAM (usa secrets en producción)
+TOKEN = st.secrets.get("TOKEN", "")
+CHAT_ID = st.secrets.get("CHAT_ID", "")
 
 def send_telegram(msg):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": msg})
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        requests.post(url, data={"chat_id": CHAT_ID, "text": msg}, timeout=10)
+    except:
+        pass  # evita que falle toda la app
 
-# Evitar alertas duplicadas
+# 🧠 evitar duplicados
 if "alerts_sent" not in st.session_state:
     st.session_state.alerts_sent = set()
 
-# Binance
-client = Client()
+# 🔗 BINANCE CLIENT (SIN PING PROBLEMÁTICO)
+try:
+    client = Client("", "")  # <- clave para cloud
+except:
+    st.error("Error conectando con Binance")
+    st.stop()
 
 symbols = [
     "BTCUSDT","ETHUSDT","SOLUSDT",
     "MANAUSDT","ADAUSDT","AVAXUSDT","ALGOUSDT"
 ]
 
+# 📦 CACHE (CLAVE PARA ESTABILIDAD)
+@st.cache_data(ttl=60)
+def get_klines(symbol):
+    try:
+        return client.get_klines(
+            symbol=symbol,
+            interval=Client.KLINE_INTERVAL_5MINUTE,
+            limit=150
+        )
+    except:
+        return None
+
 results = []
 
 for symbol in symbols:
 
-    klines = client.get_klines(
-        symbol=symbol,
-        interval=Client.KLINE_INTERVAL_5MINUTE,
-        limit=150
-    )
+    klines = get_klines(symbol)
+
+    if klines is None:
+        continue
 
     df = pd.DataFrame(klines, columns=[
         "time","open","high","low","close","volume",
@@ -64,7 +82,6 @@ for symbol in symbols:
 
     df["vol_avg"] = df["volume"].rolling(window=20).mean()
 
-    # Últimos valores
     price = df["close"].iloc[-1]
     rsi = df["rsi"].iloc[-1]
     ma = df["ma"].iloc[-1]
@@ -73,7 +90,6 @@ for symbol in symbols:
     vol = df["volume"].iloc[-1]
     vol_avg = df["vol_avg"].iloc[-1]
 
-    # Soporte / resistencia
     recent_high = df["high"].rolling(20).max().iloc[-1]
     recent_low = df["low"].rolling(20).min().iloc[-1]
 
@@ -81,37 +97,21 @@ for symbol in symbols:
     entry = stop = target = rr = None
     probability = 0
 
-    # 🧠 PROBABILIDAD PONDERADA SHORT
+    # 🧠 PROBABILIDAD SHORT
     prob_short = 0
-    if rsi > 70:
-        prob_short += 30
-    elif rsi > 65:
-        prob_short += 20
+    if rsi > 70: prob_short += 30
+    elif rsi > 65: prob_short += 20
+    if price < ma: prob_short += 25
+    if macd_val < macd_sig: prob_short += 25
+    if vol > vol_avg: prob_short += 20
 
-    if price < ma:
-        prob_short += 25
-
-    if macd_val < macd_sig:
-        prob_short += 25
-
-    if vol > vol_avg:
-        prob_short += 20
-
-    # 🧠 PROBABILIDAD PONDERADA LONG
+    # 🧠 PROBABILIDAD LONG
     prob_long = 0
-    if rsi < 30:
-        prob_long += 30
-    elif rsi < 35:
-        prob_long += 20
-
-    if price > ma:
-        prob_long += 25
-
-    if macd_val > macd_sig:
-        prob_long += 25
-
-    if vol > vol_avg:
-        prob_long += 20
+    if rsi < 30: prob_long += 30
+    elif rsi < 35: prob_long += 20
+    if price > ma: prob_long += 25
+    if macd_val > macd_sig: prob_long += 25
+    if vol > vol_avg: prob_long += 20
 
     # 🎯 DECISIÓN
     if prob_short >= 70:
@@ -133,7 +133,7 @@ for symbol in symbols:
         setup = f"LONG 📈 ({prob_long}%)"
 
     # 🔔 ALERTAS
-    if probability >= 80:
+    if probability >= 85:
         alert_key = f"{symbol}_{setup}"
 
         if alert_key not in st.session_state.alerts_sent:
@@ -154,27 +154,20 @@ R:R: {rr}
             st.session_state.alerts_sent.add(alert_key)
 
     # 🎨 FORMATO PRO
-    price_fmt = f"{price:,.4f}"
-    entry_fmt = f"{entry:,.4f}" if entry else "-"
-    stop_fmt = f"{stop:,.4f}" if stop else "-"
-    tp_fmt = f"{target:,.4f}" if target else "-"
-
     results.append({
         "Crypto": symbol.replace("USDT",""),
-        "Precio": price_fmt,
+        "Precio": f"{price:,.4f}",
         "RSI": f"{rsi:.2f}",
         "Setup": setup,
         "Probabilidad %": f"{probability}%",
-        "Entrada": entry_fmt,
-        "Stop": stop_fmt,
-        "TP": tp_fmt,
+        "Entrada": f"{entry:,.4f}" if entry else "-",
+        "Stop": f"{stop:,.4f}" if stop else "-",
+        "TP": f"{target:,.4f}" if target else "-",
         "R:R": rr if rr else "-"
     })
 
-# 📊 TABLA
+# 📊 TABLA FINAL
 df_final = pd.DataFrame(results)
-
-# Ordenar
 df_final = df_final.sort_values(by="Probabilidad %", ascending=False)
 
 st.dataframe(df_final, use_container_width=True)
