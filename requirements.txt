@@ -1,0 +1,6 @@
+streamlit
+pandas
+ta
+python-binance
+requests
+streamlit-autorefresh
